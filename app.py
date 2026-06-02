@@ -164,6 +164,16 @@ class SystemSettings(db.Model):
     key = db.Column(db.String(100), unique=True, nullable=False)
     value = db.Column(db.Text, default='')
 
+# ==================== نموذج جديد لتخزين سجل تحصيل العمولات بشكل دائم ====================
+class CommissionCollection(db.Model):
+    __tablename__ = 'commission_collections'
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.DateTime, default=datetime.utcnow)
+    channel_name = db.Column(db.String(100), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    target = db.Column(db.String(50), nullable=False)  # 'wallet' or 'profit'
+    collected_by = db.Column(db.String(100), nullable=False)
+
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
@@ -901,13 +911,22 @@ def activity_log():
     '''
     return get_base_html(content, "سجل العمليات", current_user.name, True)
 
+# ==================== صفحة المنتجات (تم إصلاحها بالكامل) ====================
 @app.route('/products')
 @login_required
 def products():
     is_admin = current_user.role == 'admin'
+    # بناء الأجزاء الخاصة بالمدير
+    admin_columns = ''
+    admin_actions = ''
+    add_product_form = ''
+    edit_product_fields = ''
     if is_admin:
         admin_columns = '''
-                <th class="text-right py-2 px-2">التكلفة</th><th class="text-right py-2 px-2">العمولة</th><th class="text-right py-2 px-2">السعر الشامل</th><th class="text-right py-2 px-2">الربح</th>
+                <th class="text-right py-2 px-2">التكلفة</th>
+                <th class="text-right py-2 px-2">العمولة</th>
+                <th class="text-right py-2 px-2">السعر الشامل</th>
+                <th class="text-right py-2 px-2">الربح</th>
         '''
         admin_actions = '<th class="text-right py-2 px-2">الإجراءات</th>'
         add_product_form = '''
@@ -922,19 +941,17 @@ def products():
         <button id="addProductBtn" class="btn-success mt-3 px-4 py-2 rounded-xl font-bold text-sm"><i class="fas fa-plus ml-1"></i> إضافة المنتج</button>
         '''
         edit_product_fields = '''
-        <div class="space-y-2"><div><label class="block text-sm font-medium mb-1">اسم المنتج</label><input type="text" id="editName" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
-        <div><label class="block text-sm font-medium mb-1">التكلفة</label><input type="number" id="editCost" step="0.01" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
-        <div><label class="block text-sm font-medium mb-1">العمولة</label><input type="number" id="editCommission" step="0.01" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
-        <div><label class="block text-sm font-medium mb-1">سعر البيع</label><input type="number" id="editPrice" step="0.01" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
-        <div><label class="block text-sm font-medium mb-1">السعر الشامل</label><input type="number" id="editTotal" step="0.01" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
-        <div><label class="block text-sm font-medium mb-1">مدة الصلاحية (شهور)</label><input type="number" id="editExpiry" step="1" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
+        <div class="space-y-2">
+            <div><label class="block text-sm font-medium mb-1">اسم المنتج</label><input type="text" id="editName" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
+            <div><label class="block text-sm font-medium mb-1">التكلفة</label><input type="number" id="editCost" step="0.01" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
+            <div><label class="block text-sm font-medium mb-1">العمولة</label><input type="number" id="editCommission" step="0.01" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
+            <div><label class="block text-sm font-medium mb-1">سعر البيع</label><input type="number" id="editPrice" step="0.01" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
+            <div><label class="block text-sm font-medium mb-1">السعر الشامل</label><input type="number" id="editTotal" step="0.01" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
+            <div><label class="block text-sm font-medium mb-1">مدة الصلاحية (شهور)</label><input type="number" id="editExpiry" step="1" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"></div>
         </div>
         '''
     else:
-        admin_columns = ''
-        admin_actions = ''
         add_product_form = '<div class="text-yellow-400 p-3 text-center">👋 غير مسموح بإضافة أو تعديل المنتجات. يمكنك فقط عرض المنتجات.</div>'
-        edit_product_fields = '<div>غير مسموح بالتعديل</div>'
     
     content = f'''
     <div class="space-y-4">
@@ -949,28 +966,47 @@ def products():
                 <div class="flex gap-2"><input type="text" id="productSearch" placeholder="🔍 بحث باسم المنتج..." class="px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 w-48 text-sm"><button id="refreshBtn" class="btn-primary px-3 py-2 rounded-xl text-sm"><i class="fas fa-sync-alt ml-1"></i> تحديث</button></div>
             </div>
             <div id="productsLoading" class="text-center py-8 text-gray-400">جاري تحميل المنتجات...</div>
-            <div class="overflow-x-auto"><table class="w-full min-w-[800px]" id="productsTable" style="display: none;"><thead><tr class="border-b border-gray-700"><th class="text-right py-2 px-2">#</th><th class="text-right py-2 px-2">المنتج</th>{admin_columns}<th class="text-right py-2 px-2">سعر البيع</th><th class="text-right py-2 px-2">الصلاحية</th>{admin_actions}</tr></thead><tbody id="productsTableBody"></tbody></table></div>
+            <div class="overflow-x-auto"><table class="w-full min-w-[800px]" id="productsTable" style="display: none;"><thead><tr class="border-b border-gray-700"><th class="text-right py-2 px-2">#</th><th class="text-right py-2 px-2">المنتج</th>{admin_columns}<th class="text-right py-2 px-2">سعر البيع</th><th class="text-right py-2 px-2">الصلاحية</th>{admin_actions}<tr></thead><tbody id="productsTableBody"></tbody></table></div>
         </div>
     </div>
-    {'<div class="modal-overlay" id="editProductModal"><div class="modal-container"><h2 class="text-xl font-bold mb-3">✏️ تعديل المنتج</h2><input type="hidden" id="editProductId">'+edit_product_fields+'<div class="flex gap-2 mt-3"><button id="saveEditBtn" class="btn-primary flex-1 py-2 rounded-xl text-sm"><i class="fas fa-save ml-1"></i> حفظ</button><button id="closeEditModal" class="btn-danger flex-1 py-2 rounded-xl text-sm"><i class="fas fa-times ml-1"></i> إلغاء</button></div></div></div>' if is_admin else ''}
+    {"<div class='modal-overlay' id='editProductModal'><div class='modal-container'><h2 class='text-xl font-bold mb-3'>✏️ تعديل المنتج</h2><input type='hidden' id='editProductId'>"+edit_product_fields+"<div class='flex gap-2 mt-3'><button id='saveEditBtn' class='btn-primary flex-1 py-2 rounded-xl text-sm'><i class='fas fa-save ml-1'></i> حفظ</button><button id='closeEditModal' class='btn-danger flex-1 py-2 rounded-xl text-sm'><i class='fas fa-times ml-1'></i> إلغاء</button></div></div></div>" if is_admin else ""}
     <script>
         let allProducts = [];
         async function loadProducts() {{
+            const loadingDiv = document.getElementById('productsLoading');
+            const table = document.getElementById('productsTable');
+            if(loadingDiv) loadingDiv.style.display = 'block';
+            if(table) table.style.display = 'none';
             try {{
-                document.getElementById('productsLoading').style.display = 'block';
-                document.getElementById('productsTable').style.display = 'none';
                 const res = await fetch('/api/products');
-                if(!res.ok) throw new Error('فشل تحميل المنتجات');
+                if(!res.ok) throw new Error('HTTP '+res.status);
                 allProducts = await res.json();
                 renderProducts(allProducts);
-                document.getElementById('productsLoading').style.display = 'none';
-                document.getElementById('productsTable').style.display = 'table';
-            }} catch(e){{ console.error(e); document.getElementById('productsLoading').innerHTML = '<div class="text-red-400 text-center py-4">❌ خطأ في تحميل المنتجات</div>'; showToast('خطأ في تحميل المنتجات', 'error'); }}
+                if(loadingDiv) loadingDiv.style.display = 'none';
+                if(table) table.style.display = 'table';
+            }} catch(e) {{
+                console.error(e);
+                if(loadingDiv) loadingDiv.innerHTML = '<div class="text-red-400 text-center py-4">❌ خطأ في تحميل المنتجات: '+e.message+'</div>';
+                if(window.showToast) showToast('خطأ في تحميل المنتجات', 'error');
+                else alert('خطأ في تحميل المنتجات');
+            }}
         }}
-        function escapeHtml(str) {{ return str.replace(/[&<>]/g, function(m) {{ if(m === '&') return '&amp;'; if(m === '<') return '&lt;'; if(m === '>') return '&gt;'; return m; }}); }}
+        function escapeHtml(str) {{
+            if(!str) return '';
+            return str.replace(/[&<>]/g, function(m) {{
+                if(m === '&') return '&amp;';
+                if(m === '<') return '&lt;';
+                if(m === '>') return '&gt;';
+                return m;
+            }});
+        }}
         function renderProducts(products) {{
             const tbody = document.getElementById('productsTableBody');
-            if(products.length === 0){{ tbody.innerHTML = '<tr><td colspan="10" class="text-center py-8 text-gray-500">لا توجد منتجات</td></tr>'; return; }}
+            if(!tbody) return;
+            if(products.length === 0) {{
+                tbody.innerHTML = '<tr><td colspan="10" class="text-center py-8 text-gray-500">لا توجد منتجات</td></tr>';
+                return;
+            }}
             const isAdmin = {str(is_admin).lower()};
             tbody.innerHTML = products.map((p, idx) => {{
                 let cols = `<td class="py-2 px-2">${{idx+1}}</td><td class="py-2 px-2 font-bold text-cyan-400">${{escapeHtml(p.name)}}</td>`;
@@ -979,20 +1015,129 @@ def products():
                 }}
                 cols += `<td class="py-2 px-2 text-green-400">${{p.selling_price.toFixed(2)}}</td><td class="py-2 px-2">${{p.expiry_months || 0}} شهر</td>`;
                 if(isAdmin) {{
-                    cols += `<td class="py-2 px-2"><button onclick="openEditModal(${{p.id}}, '${{escapeHtml(p.name)}}', ${{p.cost}}, ${{p.commission}}, ${{p.selling_price}}, ${{p.total_price}}, ${{p.expiry_months}})" class="btn-warning px-2 py-1 rounded-lg text-xs ml-1"><i class="fas fa-edit"></i> تعديل</button><button onclick="deleteProduct(${{p.id}}, '${{escapeHtml(p.name)}}')" class="btn-danger px-2 py-1 rounded-lg text-xs"><i class="fas fa-trash"></i> حذف</button></td>`;
+                    cols += `<td class="py-2 px-2"><button onclick="openEditModal(${{p.id}}, '${{escapeHtml(p.name)}}', ${{p.cost}}, ${{p.commission}}, ${{p.selling_price}}, ${{p.total_price}}, ${{p.expiry_months}})" class="btn-warning px-2 py-1 rounded-lg text-xs ml-1"><i class="fas fa-edit"></i> تعديل</button> <button onclick="deleteProduct(${{p.id}}, '${{escapeHtml(p.name)}}')" class="btn-danger px-2 py-1 rounded-lg text-xs"><i class="fas fa-trash"></i> حذف</button></td>`;
                 }}
                 return `<tr class="border-b border-gray-800 hover:bg-gray-800/50">${{cols}}</tr>`;
             }}).join('');
         }}
-        {'window.openEditModal = (id, name, cost, commission, price, total, expiry) => {{ document.getElementById("editProductId").value = id; document.getElementById("editName").value = name; document.getElementById("editCost").value = cost; document.getElementById("editCommission").value = commission; document.getElementById("editPrice").value = price; document.getElementById("editTotal").value = total; document.getElementById("editExpiry").value = expiry; document.getElementById("editProductModal").style.display = "flex"; setTimeout(()=>document.querySelector("#editProductModal .modal-container").classList.add("active"),10); }}; document.getElementById("closeEditModal").onclick = () => {{ document.getElementById("editProductModal").style.display = "none"; document.querySelector("#editProductModal .modal-container").classList.remove("active"); }}; document.getElementById("saveEditBtn").onclick = async () => {{ const id = document.getElementById("editProductId").value; const newName = document.getElementById("editName").value.trim(); const newCost = parseFloat(document.getElementById("editCost").value); const newCommission = parseFloat(document.getElementById("editCommission").value); const newPrice = parseFloat(document.getElementById("editPrice").value); const newTotal = parseFloat(document.getElementById("editTotal").value); const newExpiry = parseInt(document.getElementById("editExpiry").value) || 0; if(!newName || isNaN(newCost) || isNaN(newCommission) || isNaN(newPrice) || isNaN(newTotal)) {{ showToast("الرجاء تعبئة جميع الحقول بشكل صحيح", "error"); return; }} if(newCost <= 0 || newCommission < 0 || newPrice <= 0 || newTotal <= 0) {{ showToast("القيم يجب أن تكون أرقاماً موجبة", "error"); return; }} try {{ const res = await fetch(`/api/products/${{id}}`, {{ method: "PUT", headers: {{"Content-Type": "application/json"}}, body: JSON.stringify({{ name: newName, cost: newCost, commission: newCommission, selling_price: newPrice, total_price: newTotal, expiry_months: newExpiry }}) }}); if(res.ok) {{ showToast("✅ تم تعديل المنتج بنجاح", "success"); document.getElementById("closeEditModal").click(); loadProducts(); }} else {{ const error = await res.json(); showToast(error.error || "فشل التعديل", "error"); }} }} catch(e) {{ showToast("خطأ في الاتصال", "error"); }} }};' if is_admin else ''}
-        document.getElementById('productSearch').addEventListener('input', function(e) {{ const searchTerm = e.target.value.toLowerCase().trim(); if(searchTerm === '') renderProducts(allProducts); else {{ const filtered = allProducts.filter(p => p.name.toLowerCase().includes(searchTerm)); renderProducts(filtered); }} }});
-        {'window.deleteProduct = async (id, name) => {{ if(confirm(`⚠️ هل أنت متأكد من حذف المنتج "${{name}}"؟`)){{ try {{ const res = await fetch(`/api/products/${{id}}`, {{ method: "DELETE" }}); if(res.ok){{ showToast(`✅ تم حذف المنتج "${{name}}"`, "success"); loadProducts(); }} else {{ showToast("فشل حذف المنتج", "error"); }} }} catch(e) {{ showToast("خطأ في الاتصال", "error"); }} }} }}; document.getElementById("addProductBtn").onclick = async () => {{ const name = document.getElementById("productName").value.trim(); const cost = parseFloat(document.getElementById("productCost").value); const commission = parseFloat(document.getElementById("productCommission").value); const price = parseFloat(document.getElementById("productPrice").value); const total = parseFloat(document.getElementById("productTotal").value); const expiry_months = parseInt(document.getElementById("productExpiry").value) || 0; if(!name || isNaN(cost) || isNaN(commission) || isNaN(price) || isNaN(total)) {{ showToast("الرجاء تعبئة جميع الحقول", "error"); return; }} if(cost <= 0 || commission < 0 || price <= 0 || total <= 0) {{ showToast("القيم يجب أن تكون أرقاماً موجبة", "error"); return; }} try {{ const res = await fetch("/api/products", {{ method: "POST", headers: {{"Content-Type": "application/json"}}, body: JSON.stringify({{name, cost, commission, selling_price: price, total_price: total, expiry_months}}) }}); if(res.ok) {{ showToast(`✅ تمت إضافة المنتج "${{name}}"`, "success"); document.getElementById("productName").value = ""; document.getElementById("productCost").value = ""; document.getElementById("productCommission").value = ""; document.getElementById("productPrice").value = ""; document.getElementById("productTotal").value = ""; document.getElementById("productExpiry").value = "0"; loadProducts(); }} else {{ const error = await res.json(); showToast(error.error || "فشل الإضافة", "error"); }} }} catch(e) {{ showToast("خطأ في الاتصال", "error"); }} }};' if is_admin else ''}
-        document.getElementById('refreshBtn').onclick = loadProducts;
+        {'''
+        window.openEditModal = (id, name, cost, commission, price, total, expiry) => {
+            document.getElementById('editProductId').value = id;
+            document.getElementById('editName').value = name;
+            document.getElementById('editCost').value = cost;
+            document.getElementById('editCommission').value = commission;
+            document.getElementById('editPrice').value = price;
+            document.getElementById('editTotal').value = total;
+            document.getElementById('editExpiry').value = expiry;
+            const modal = document.getElementById('editProductModal');
+            if(modal) {
+                modal.style.display = 'flex';
+                setTimeout(() => { const c = modal.querySelector('.modal-container'); if(c) c.classList.add('active'); }, 10);
+            }
+        };
+        document.getElementById('closeEditModal')?.addEventListener('click', () => {
+            const modal = document.getElementById('editProductModal');
+            if(modal) {
+                modal.style.display = 'none';
+                const c = modal.querySelector('.modal-container');
+                if(c) c.classList.remove('active');
+            }
+        });
+        document.getElementById('saveEditBtn')?.addEventListener('click', async () => {
+            const id = document.getElementById('editProductId').value;
+            const newName = document.getElementById('editName').value.trim();
+            const newCost = parseFloat(document.getElementById('editCost').value);
+            const newCommission = parseFloat(document.getElementById('editCommission').value);
+            const newPrice = parseFloat(document.getElementById('editPrice').value);
+            const newTotal = parseFloat(document.getElementById('editTotal').value);
+            const newExpiry = parseInt(document.getElementById('editExpiry').value) || 0;
+            if(!newName || isNaN(newCost) || isNaN(newCommission) || isNaN(newPrice) || isNaN(newTotal)) {
+                showToast('الرجاء تعبئة جميع الحقول بشكل صحيح', 'error');
+                return;
+            }
+            if(newCost <= 0 || newCommission < 0 || newPrice <= 0 || newTotal <= 0) {
+                showToast('القيم يجب أن تكون أرقاماً موجبة', 'error');
+                return;
+            }
+            try {
+                const res = await fetch(`/api/products/${id}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: newName, cost: newCost, commission: newCommission, selling_price: newPrice, total_price: newTotal, expiry_months: newExpiry})
+                });
+                if(res.ok) {
+                    showToast('✅ تم تعديل المنتج بنجاح', 'success');
+                    document.getElementById('closeEditModal')?.click();
+                    loadProducts();
+                } else {
+                    const error = await res.json();
+                    showToast(error.error || 'فشل التعديل', 'error');
+                }
+            } catch(e) { showToast('خطأ في الاتصال', 'error'); }
+        });
+        window.deleteProduct = async (id, name) => {
+            if(confirm(`⚠️ هل أنت متأكد من حذف المنتج "${name}"؟`)) {
+                try {
+                    const res = await fetch(`/api/products/${id}`, { method: 'DELETE' });
+                    if(res.ok) {
+                        showToast(`✅ تم حذف المنتج "${name}"`, 'success');
+                        loadProducts();
+                    } else {
+                        showToast('فشل حذف المنتج', 'error');
+                    }
+                } catch(e) { showToast('خطأ في الاتصال', 'error'); }
+            }
+        };
+        document.getElementById('addProductBtn')?.addEventListener('click', async () => {
+            const name = document.getElementById('productName').value.trim();
+            const cost = parseFloat(document.getElementById('productCost').value);
+            const commission = parseFloat(document.getElementById('productCommission').value);
+            const price = parseFloat(document.getElementById('productPrice').value);
+            const total = parseFloat(document.getElementById('productTotal').value);
+            const expiry_months = parseInt(document.getElementById('productExpiry').value) || 0;
+            if(!name || isNaN(cost) || isNaN(commission) || isNaN(price) || isNaN(total)) {
+                showToast('الرجاء تعبئة جميع الحقول', 'error');
+                return;
+            }
+            if(cost <= 0 || commission < 0 || price <= 0 || total <= 0) {
+                showToast('القيم يجب أن تكون أرقاماً موجبة', 'error');
+                return;
+            }
+            try {
+                const res = await fetch('/api/products', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name, cost, commission, selling_price: price, total_price: total, expiry_months})
+                });
+                if(res.ok) {
+                    showToast(`✅ تمت إضافة المنتج "${name}"`, 'success');
+                    document.getElementById('productName').value = '';
+                    document.getElementById('productCost').value = '';
+                    document.getElementById('productCommission').value = '';
+                    document.getElementById('productPrice').value = '';
+                    document.getElementById('productTotal').value = '';
+                    document.getElementById('productExpiry').value = '0';
+                    loadProducts();
+                } else {
+                    const error = await res.json();
+                    showToast(error.error || 'فشل الإضافة', 'error');
+                }
+            } catch(e) { showToast('خطأ في الاتصال', 'error'); }
+        });
+        ''' if is_admin else ''}
+        document.getElementById('productSearch')?.addEventListener('input', function(e) {{
+            const searchTerm = e.target.value.toLowerCase().trim();
+            if(searchTerm === '') renderProducts(allProducts);
+            else {{
+                const filtered = allProducts.filter(p => p.name.toLowerCase().includes(searchTerm));
+                renderProducts(filtered);
+            }}
+        }});
+        document.getElementById('refreshBtn')?.addEventListener('click', loadProducts);
         loadProducts();
     </script>
     '''
     return get_base_html(content, "المنتجات", current_user.name, is_admin)
-
 @app.route('/sales')
 @login_required
 def sales():
@@ -1098,7 +1243,7 @@ def reports():
         </div>
         <div class="card rounded-2xl p-4 lg:p-6">
             <div class="flex justify-between items-center mb-3 flex-wrap gap-2"><h2 class="text-xl lg:text-2xl font-bold">📋 قائمة المبيعات</h2><button id="refreshTable" class="btn-primary px-3 py-2 rounded-xl text-sm"><i class="fas fa-sync-alt ml-1"></i> تحديث</button></div>
-            <div class="overflow-x-auto"><table class="w-full min-w-[800px]"><thead><tr id="tableHeader">{'<th>التاريخ</th><th>رقم الطلب</th><th>العميل</th><th>الجوال</th><th>المنتج</th><th>الفرع</th><th>الموظف</th><th>سعر البيع</th>' + ('<th>التكلفة</th><th>العمولة</th><th>صافي الربح</th>' if is_admin else '') + '<th>طباعة</th><th>واتساب</th><th>تعديل</th><th>حذف</th><tr>'}</thead><tbody id="reportsTable"><tr><td colspan="13" class="text-center py-8 text-gray-500">جاري التحميل...</td></tr></tbody></table></div>
+            <div class="overflow-x-auto"><table class="w-full min-w-[800px]"><thead><tr id="tableHeader">{'<th>التاريخ</th><th>رقم الطلب</th><th>العميل</th><th>الجوال</th><th>المنتج</th><th>الفرع</th><th>الموظف</th><th>سعر البيع</th>' + ('<th>التكلفة</th><th>العمولة</th><th>صافي الربح</th>' if is_admin else '') + '<th>طباعة</th><th>واتساب</th><th>تعديل</th><th>حذف</th></tr>'}</thead><tbody id="reportsTable"><tr><td colspan="13" class="text-center py-8 text-gray-500">جاري التحميل...</td></tr></tbody></table></div>
         </div>
     </div>
     {column_selector}
@@ -1181,6 +1326,7 @@ def debts():
     '''
     return get_base_html(content, "المديونية", current_user.name, True)
 
+# ==================== صفحة العمولات مع التعديل (سجل تحصيل دائم) ====================
 @app.route('/commissions')
 @admin_required
 def commissions():
@@ -1189,19 +1335,40 @@ def commissions():
         <h1 class="text-2xl lg:text-3xl font-bold mb-4">💰 إدارة العمولات</h1>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
             <div class="card rounded-2xl p-4 lg:p-6"><div class="flex justify-between items-center mb-3"><h2 class="text-xl lg:text-2xl font-bold"><i class="fas fa-chart-pie text-cyan-400 ml-1"></i> العمولات المعلقة حسب المصدر</h2><button id="refreshChannels" class="btn-primary px-3 py-2 rounded-xl text-sm"><i class="fas fa-sync-alt ml-1"></i> تحديث</button></div><div id="channelsList" class="space-y-2 max-h-[400px] overflow-y-auto"><div class="text-center text-gray-500 py-8">جاري التحميل...</div></div><div class="mt-4 pt-3 border-t border-gray-700"><div class="debt-card flex justify-between items-center p-3"><span class="font-bold">📊 إجمالي العمولات المعلقة</span><span class="text-xl lg:text-2xl font-bold text-yellow-400" id="totalCommission">0.00 ريال</span></div></div></div>
-            <div class="card rounded-2xl p-4 lg:p-6"><h2 class="text-xl lg:text-2xl font-bold mb-3"><i class="fas fa-hand-holding-usd text-green-400 ml-1"></i> تحصيل العمولات</h2><div class="bg-gray-800 rounded-xl p-3 mb-3 text-center"><p class="text-gray-400 text-sm">الرصيد المتاح للتحصيل</p><p class="text-3xl lg:text-4xl font-bold text-green-400" id="availableCommission">0.00</p><p class="text-xs text-gray-500">ريال سعودي</p></div><div class="space-y-3"><div><label class="block text-sm font-medium mb-1">💰 اختر المصدر</label><select id="commissionChannel" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"><option value="">اختر المصدر</option></select></div><div><label class="block text-sm font-medium mb-1">المبلغ المراد تحصيله</label><input type="number" id="collectAmount" step="0.01" placeholder="أدخل المبلغ" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-center text-sm"></div><div><label class="block text-sm font-medium mb-1">📈 وجهة التحصيل</label><div class="grid grid-cols-2 gap-2"><button id="targetWalletBtn" class="target-btn py-2 rounded-xl bg-green-600 border-2 border-green-500 font-bold text-sm transition">💰 إضافة للمحفظة</button><button id="targetProfitBtn" class="target-btn py-2 rounded-xl bg-gray-700 border-2 border-gray-600 font-bold text-sm transition">📈 إضافة للأرباح</button></div><input type="hidden" id="collectTarget" value="wallet"></div><button id="collectBtn" class="btn-primary w-full py-2 rounded-xl font-bold text-sm transition"><i class="fas fa-check-circle ml-1"></i> تأكيد التحصيل</button></div><div class="mt-4"><h3 class="font-bold mb-2 text-sm">📋 سجل التحصيل</h3><div id="collectionLog" class="max-h-[200px] overflow-y-auto space-y-1"><div class="text-center text-gray-500 py-4 text-sm">لا توجد عمليات تحصيل</div></div></div></div>
+            <div class="card rounded-2xl p-4 lg:p-6"><h2 class="text-xl lg:text-2xl font-bold mb-3"><i class="fas fa-hand-holding-usd text-green-400 ml-1"></i> تحصيل العمولات</h2><div class="bg-gray-800 rounded-xl p-3 mb-3 text-center"><p class="text-gray-400 text-sm">الرصيد المتاح للتحصيل</p><p class="text-3xl lg:text-4xl font-bold text-green-400" id="availableCommission">0.00</p><p class="text-xs text-gray-500">ريال سعودي</p></div><div class="space-y-3"><div><label class="block text-sm font-medium mb-1">💰 اختر المصدر</label><select id="commissionChannel" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-sm"><option value="">اختر المصدر</option></select></div><div><label class="block text-sm font-medium mb-1">المبلغ المراد تحصيله</label><input type="number" id="collectAmount" step="0.01" placeholder="أدخل المبلغ" class="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-center text-sm"></div><div><label class="block text-sm font-medium mb-1">📈 وجهة التحصيل</label><div class="grid grid-cols-2 gap-2"><button id="targetWalletBtn" class="target-btn py-2 rounded-xl bg-green-600 border-2 border-green-500 font-bold text-sm transition">💰 إضافة للمحفظة</button><button id="targetProfitBtn" class="target-btn py-2 rounded-xl bg-gray-700 border-2 border-gray-600 font-bold text-sm transition">📈 إضافة للأرباح</button></div><input type="hidden" id="collectTarget" value="wallet"></div><button id="collectBtn" class="btn-primary w-full py-2 rounded-xl font-bold text-sm transition"><i class="fas fa-check-circle ml-1"></i> تأكيد التحصيل</button></div><div class="mt-4"><h3 class="font-bold mb-2 text-sm">📋 سجل التحصيل (دائم)</h3><div id="collectionLog" class="max-h-[200px] overflow-y-auto space-y-1"><div class="text-center text-gray-500 py-4 text-sm">جاري التحميل...</div></div></div></div>
         </div>
     </div>
     <script>
-        let collectionHistory = [], currentChannels = [];
+        let currentChannels = [];
         async function loadChannelsCommissions() { try { const res = await fetch('/api/channels'); currentChannels = await res.json(); renderChannels(); const channelSelect = document.getElementById('commissionChannel'); channelSelect.innerHTML = '<option value="">اختر المصدر</option>' + currentChannels.map(ch => `<option value="${ch.id}" data-name="${ch.name}" data-amount="${ch.pending_commission}">${ch.name} (${ch.pending_commission.toFixed(2)} ريال)</option>`).join(''); } catch(e) { showToast('خطأ في التحميل','error'); } }
         function renderChannels() { const container = document.getElementById('channelsList'); let total = 0; if(currentChannels.length===0){ container.innerHTML='<div class="text-center text-gray-500 py-8">لا توجد مصادر تفعيل</div>'; document.getElementById('totalCommission').innerHTML='0.00 ريال'; document.getElementById('availableCommission').innerHTML='0.00'; return; } container.innerHTML = currentChannels.map(ch => { total += ch.pending_commission; const percentage = total>0?(ch.pending_commission/total)*100:0; return `<div class="bg-gray-800 rounded-xl p-2 hover:bg-gray-700 transition"><div class="flex justify-between items-center"><div><i class="fas fa-satellite-dish text-cyan-400 ml-1"></i><span class="font-bold text-sm">${ch.name}</span></div><div><span class="text-yellow-400 font-bold text-sm">${ch.pending_commission.toFixed(2)}</span><span class="text-xs text-gray-500 mr-1">ريال</span></div></div><div class="w-full bg-gray-700 rounded-full h-1.5 mt-1"><div class="bg-yellow-400 h-1.5 rounded-full" style="width: ${Math.min(100,percentage)}%"></div></div></div>`; }).join(''); document.getElementById('totalCommission').innerHTML = total.toFixed(2)+' ريال'; document.getElementById('availableCommission').innerHTML = total.toFixed(2); }
         document.getElementById('targetWalletBtn').onclick = () => { document.getElementById('targetWalletBtn').classList.remove('bg-gray-700','border-gray-600'); document.getElementById('targetWalletBtn').classList.add('bg-green-600','border-green-500'); document.getElementById('targetProfitBtn').classList.remove('bg-green-600','border-green-500'); document.getElementById('targetProfitBtn').classList.add('bg-gray-700','border-gray-600'); document.getElementById('collectTarget').value = 'wallet'; };
         document.getElementById('targetProfitBtn').onclick = () => { document.getElementById('targetProfitBtn').classList.remove('bg-gray-700','border-gray-600'); document.getElementById('targetProfitBtn').classList.add('bg-green-600','border-green-500'); document.getElementById('targetWalletBtn').classList.remove('bg-green-600','border-green-500'); document.getElementById('targetWalletBtn').classList.add('bg-gray-700','border-gray-600'); document.getElementById('collectTarget').value = 'profit'; };
-        document.getElementById('collectBtn').onclick = async () => { const channelId = document.getElementById('commissionChannel').value; const amount = parseFloat(document.getElementById('collectAmount').value); const target = document.getElementById('collectTarget').value; if(!channelId){ showToast('الرجاء اختيار المصدر','error'); return; } if(isNaN(amount)||amount<=0){ showToast('الرجاء إدخال مبلغ صحيح','error'); return; } try { const res = await fetch('/api/commissions/collect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channelId, amount, target})}); const result = await res.json(); if(result.success){ showToast(`✅ تم تحصيل ${result.collected.toFixed(2)} ريال من ${result.channelName}`,'success'); document.getElementById('collectAmount').value=''; document.getElementById('commissionChannel').value=''; loadChannelsCommissions(); const logEntry = { date: new Date().toLocaleString('ar-SA'), amount: result.collected, channel: result.channelName, target: target==='wallet'?'المحفظة':'الأرباح' }; collectionHistory.unshift(logEntry); updateCollectionLog(); } else showToast(result.error,'error'); } catch(e){ showToast('خطأ في الاتصال','error'); } };
-        function updateCollectionLog() { const container = document.getElementById('collectionLog'); if(collectionHistory.length===0){ container.innerHTML='<div class="text-center text-gray-500 py-4 text-sm">لا توجد عمليات تحصيل</div>'; return; } container.innerHTML = collectionHistory.slice(0,10).map(log=>`<div class="bg-gray-800 rounded-xl p-2 flex justify-between items-center hover:bg-gray-700 transition"><div><p class="text-xs">${log.date}</p><p class="text-xs text-gray-400">${log.channel} → ${log.target}</p></div><p class="text-green-400 font-bold text-sm">${log.amount.toFixed(2)} ريال</p></div>`).join(''); }
-        document.getElementById('refreshChannels').onclick = loadChannelsCommissions;
+        document.getElementById('collectBtn').onclick = async () => { const channelId = document.getElementById('commissionChannel').value; const amount = parseFloat(document.getElementById('collectAmount').value); const target = document.getElementById('collectTarget').value; if(!channelId){ showToast('الرجاء اختيار المصدر','error'); return; } if(isNaN(amount)||amount<=0){ showToast('الرجاء إدخال مبلغ صحيح','error'); return; } try { const res = await fetch('/api/commissions/collect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channelId, amount, target})}); const result = await res.json(); if(result.success){ showToast(`✅ تم تحصيل ${result.collected.toFixed(2)} ريال من ${result.channelName}`,'success'); document.getElementById('collectAmount').value=''; document.getElementById('commissionChannel').value=''; loadChannelsCommissions(); loadPersistentCollectionLog(); } else showToast(result.error,'error'); } catch(e){ showToast('خطأ في الاتصال','error'); } };
+        // دالة جديدة لتحميل سجل التحصيل من قاعدة البيانات
+        async function loadPersistentCollectionLog() {
+            try {
+                const res = await fetch('/api/commission-collection-logs');
+                const logs = await res.json();
+                const container = document.getElementById('collectionLog');
+                if(logs.length === 0) {
+                    container.innerHTML = '<div class="text-center text-gray-500 py-4 text-sm">لا توجد عمليات تحصيل</div>';
+                    return;
+                }
+                container.innerHTML = logs.slice(0, 20).map(log => `
+                    <div class="bg-gray-800 rounded-xl p-2 flex justify-between items-center hover:bg-gray-700 transition">
+                        <div>
+                            <p class="text-xs">${log.date}</p>
+                            <p class="text-xs text-gray-400">${log.channel_name} → ${log.target === 'wallet' ? 'المحفظة' : 'الأرباح'} (بواسطة ${log.collected_by})</p>
+                        </div>
+                        <p class="text-green-400 font-bold text-sm">${log.amount.toFixed(2)} ريال</p>
+                    </div>
+                `).join('');
+            } catch(e) { console.error(e); }
+        }
+        document.getElementById('refreshChannels').onclick = () => { loadChannelsCommissions(); loadPersistentCollectionLog(); };
         loadChannelsCommissions();
+        loadPersistentCollectionLog();
     </script>
     '''
     return get_base_html(content, "العمولات", current_user.name, True)
@@ -1742,9 +1909,31 @@ def api_collect_commission():
         wallet.main_balance += amount
     else:
         wallet.profits += amount
+    # تسجيل عملية التحصيل في قاعدة البيانات
+    collection_log = CommissionCollection(
+        channel_name=channel.name,
+        amount=amount,
+        target=target,
+        collected_by=current_user.name
+    )
+    db.session.add(collection_log)
     db.session.commit()
     log_activity(current_user, "تحصيل عمولة", f"تم تحصيل {amount:.2f} ريال من {channel.name} (المتبقي: {channel.pending_commission:.2f}) إلى {'المحفظة' if target=='wallet' else 'الأرباح'}")
     return jsonify({'success': True, 'collected': amount, 'channelName': channel.name, 'remaining': channel.pending_commission})
+
+# ==================== مسار جديد لجلب سجل تحصيل العمولات من قاعدة البيانات ====================
+@app.route('/api/commission-collection-logs')
+@admin_required
+def api_commission_collection_logs():
+    logs = CommissionCollection.query.order_by(CommissionCollection.date.desc()).all()
+    return jsonify([{
+        'id': l.id,
+        'date': l.date.strftime('%Y-%m-%d %H:%M:%S'),
+        'channel_name': l.channel_name,
+        'amount': l.amount,
+        'target': l.target,
+        'collected_by': l.collected_by
+    } for l in logs])
 
 @app.route('/api/company-info', methods=['POST'])
 @admin_required
@@ -2074,7 +2263,9 @@ with app.app_context():
     print("  ✅ **تعديل: رأس المال ثابت لا يتغير عند تحويل العمولات إلى أرباح**")
     print("  ✅ صلاحية المنتج بالأشهر")
     print("  ✅ تحصيل جزئي للعمولة")
+    print("  ✅ **جديد: سجل تحصيل العمولات يُخزن في قاعدة البيانات ولا يختفي عند تحديث الصفحة**")
+    print("  ✅ **جديد: تم إصلاح صفحة المنتجات بالكامل (تحميل وعرض وإضافة وتعديل وحذف)**")
     print("=" * 50)
 
 if __name__ == '__main__':
-    app.run()
+    app.run(debug=True)
