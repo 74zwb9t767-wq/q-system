@@ -2077,7 +2077,4 @@ with app.app_context():
     print("=" * 50)
 
 if __name__ == '__main__':
-    print("🚀 البرنامج الذكي (المبدع) يعمل الآن!")
-    print("📱 افتح المتصفح على: http://localhost:5000")
-    print("=" * 50)
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run()
